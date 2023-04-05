@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.9, '3.10', 3.11]
+        python-version: [3.8, 3.9, '3.10', 3.11]
 
     steps:
     - uses: actions/checkout@v2
@@ -36,5 +36,5 @@ jobs:
         flake8 . --count --ignore=C901 --exit-zero --max-complexity=10 --max-line-length=256 --statistics
     - name: Test with pytest
       run: |
-        python setup.py develop --user
+        pip install .
         # pytest -s
