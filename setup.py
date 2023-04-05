@@ -68,6 +68,8 @@ def main():
 
         # Details
         url="https://github.com/colav/Kerana",
+
+        scripts=['bin/kerana'],
         #
         license="BSD",
 
@@ -82,7 +84,8 @@ def main():
         install_requires=[
             'pymongo',
             'elasticsearch',
-            'elasticsearch_dsl'
+            'elasticsearch_dsl',
+            'progress'
         ],
     )
 
