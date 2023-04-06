@@ -9,7 +9,9 @@ class Kerana:
         self.es = Elasticsearch(es_uri, basic_auth=es_basic_auth)
         self.client = MongoClient(mdb_uri)
 
-    def mdb2es(self, mdb_name: str, mdb_col: str, es_index: str, bulk_size: int = 10, reset_esindex: bool = True, request_timeout: int = 60):
+    def mdb2es(self, mdb_name: str, mdb_col: str, es_index: str,
+               bulk_size: int = 10, reset_esindex: bool = True,
+               request_timeout: int = 60, total_fields_limit: int = 10000):
         """
         MongoDb collection to ElasticSearch index.
 
@@ -23,8 +25,10 @@ class Kerana:
             ElasticSearch index name
         bulk_size:int=10
             bulk cache size to insert document in ES.
-        reset_esindex:bool = True
+        reset_esindex:bool
             reset de index before insert documents
+        total_fields_limit:int
+            number of fields allowed by ES.
         """
 
         if reset_esindex:
@@ -33,7 +37,8 @@ class Kerana:
 
         if not self.es.indices.exists(index=es_index):
             self.es.indices.create(index=es_index)
-
+        self.es.indices.put_settings(index=es_index, body={
+            "index.mapping.total_fields.limit": total_fields_limit})
         data = self.client[mdb_name][mdb_col].find({})
         count = self.client[mdb_name][mdb_col].count_documents({})
         es_entries = []
