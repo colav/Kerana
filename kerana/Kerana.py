@@ -3,6 +3,21 @@ from pymongo import MongoClient
 from progress.bar import Bar
 import sys
 
+import json
+from bson import ObjectId
+
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, ObjectId):
+            return str(obj)  # Convierte ObjectId a string
+        # Llama al método predeterminado para otros tipos de datos
+        return super().default(obj)
+
+
+def mdb2es_dict(obj):
+    return json.loads(json.dumps(obj, cls=CustomJSONEncoder))
+
 
 class Kerana:
     def __init__(self, es_uri: str = "http://localhost:9200", es_basic_auth: tuple = ('elastic', 'colav'), mdb_uri: str = "mongodb://localhost:27017/"):
@@ -52,7 +67,7 @@ class Kerana:
                 del i['_id']
                 entry = {"_index": es_index,
                          "_id": _id,
-                         "_source": i}
+                         "_source": mdb2es_dict(i)}
 
                 es_entries.append(entry)
                 if len(es_entries) == bulk_size:
