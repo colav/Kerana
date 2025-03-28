@@ -68,6 +68,7 @@ def format_person_documents(index_name: str, docs: list) -> list:
         names = [doc["full_name"]]
         for name in doc["first_names"]:
             names.append(name + " " + " ".join(doc["last_names"]))
+        names.append(" ".join(doc["last_names"]))
         names = list(set(names))
         data.append(
             {
