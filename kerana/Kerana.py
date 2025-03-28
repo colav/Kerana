@@ -38,7 +38,7 @@ class Kerana:
         Parameters:
         ------------
         mdb_name:str
-            Mongo databse name
+            Mongo database name
         mdb_col:str
             Mongo collection name
         es_index:str
