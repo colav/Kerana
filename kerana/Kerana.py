@@ -46,7 +46,7 @@ class Kerana:
         bulk_size:int=100
             bulk cache size to insert document in ES.
         reset_esindex:bool
-            reset de index before insert documents
+            reset the index before insert documents
         request_timeout:int
             request timeout for ElasticSearch
         """
