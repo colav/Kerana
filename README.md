@@ -29,6 +29,10 @@ kerana --es_index scienti_udea_2022_network --mdb_name scienti_udea_2022 --mdb_c
 kerana --es_index scienti_udea_2022_event   --mdb_name scienti_udea_2022 --mdb_col event   --bulk_size 100
 ```
 
+# Usage Completer
+```
+kerana_completer --entity person --es_user elastic  --es_pass mypass --es_index kahi_dev_person --mdb_name kahi_dev --mdb_col person --bulk_size 100
+```
 # TODO
 * selective fields from MongoDB to ES
 * Search text in ES and resolve from ids in MongoDB

@@ -6,6 +6,8 @@ import sys
 import json
 from bson import ObjectId
 
+from kerana.completer import person_completer_indexer
+
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -23,6 +25,42 @@ class Kerana:
     def __init__(self, es_uri: str = "http://localhost:9200", es_basic_auth: tuple = ('elastic', 'colav'), mdb_uri: str = "mongodb://localhost:27017/"):
         self.es = Elasticsearch(es_uri, basic_auth=es_basic_auth)
         self.client = MongoClient(mdb_uri)
+
+    def __del__(self):
+        self.client.close()
+        self.es.close()
+
+    def completer(self, entity, mdb_name: str, mdb_col: str, es_index: str,
+                  bulk_size: int = 100, reset_esindex: bool = True,
+                  request_timeout: int = 60):
+        """
+        Create an index for person name completion in ElasticSearch.
+        Parameters:
+        ------------
+        mdb_name:str
+            Mongo databse name
+        mdb_col:str
+            Mongo collection name
+        es_index:str
+            ElasticSearch index name
+        bulk_size:int=10
+            bulk cache size to insert document in ES.
+        reset_esindex:bool
+            reset de index before insert documents
+        request_timeout:int
+            request timeout for ElasticSearch
+        """
+        if entity == "person":
+            person_completer_indexer(
+                es=self.es,
+                es_index=es_index,
+                mdb_client=self.client,
+                mdb_name=mdb_name,
+                mdb_col=mdb_col,
+                bulk_size=bulk_size,
+                reset_esindex=reset_esindex,
+                request_timeout=request_timeout
+            )
 
     def mdb2es(self, mdb_name: str, mdb_col: str, es_index: str,
                bulk_size: int = 10, reset_esindex: bool = True,
