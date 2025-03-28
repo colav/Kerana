@@ -43,7 +43,7 @@ class Kerana:
             Mongo collection name
         es_index:str
             ElasticSearch index name
-        bulk_size:int=10
+        bulk_size:int=100
             bulk cache size to insert document in ES.
         reset_esindex:bool
             reset de index before insert documents
