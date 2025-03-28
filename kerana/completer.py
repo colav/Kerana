@@ -69,6 +69,9 @@ def format_person_documents(index_name: str, docs: list) -> list:
         for name in doc["first_names"]:
             names.append(name + " " + " ".join(doc["last_names"]))
         names.append(" ".join(doc["last_names"]))
+        if len(doc["first_names"]) > 0 and len(doc["last_names"]) > 0:
+            names.append(f"{doc['last_names'][0]} {doc['first_names'][0]}")
+            names.append(f"{doc['first_names'][0]} {doc['last_names'][0]}")
         names = list(set(names))
         data.append(
             {
@@ -78,11 +81,12 @@ def format_person_documents(index_name: str, docs: list) -> list:
                 "_source": {
                     "full_name": {
                         "input": names,
-                        "weight": get_person_weight(doc["updated"], doc["affiliations"]),
-                    },  # Estructura para 'completion'
-                    "affiliations": doc.get(
-                        "affiliations", []
-                    ),  # Evitar error si falta el campo
+                        "weight": get_person_weight(
+                            doc["updated"], doc["affiliations"]
+                        ),
+                    },
+                    "affiliations": doc.get("affiliations", []),
+                    "products_count": doc.get("products_count", None),
                 },
             }
         )
@@ -130,16 +134,43 @@ def person_completer_indexer(
         es.indices.create(index=es_index, body=person_mapping)
 
     col_person = mdb_client[mdb_name][mdb_col]
-    cursor = col_person.find(
-        {},
+    pipeline = [
         {
-            "full_name": 1,
-            "affiliations": 1,
-            "first_names": 1,
-            "last_names": 1,
-            "updated": 1,
-        },
-    )
+            "$project": {
+                "full_name": 1,
+                "first_names": 1,
+                "last_names": 1,
+                "updated": 1,
+                "products_count": 1,
+                "affiliations": {
+                    "$filter": {
+                        "input": "$affiliations",
+                        "as": "affiliation",
+                        "cond": {
+                            "$not": {
+                                "$gt": [
+                                    {
+                                        "$size": {
+                                            "$filter": {
+                                                "input": "$$affiliation.types",
+                                                "as": "type",
+                                                "cond": {
+                                                    "$in": ["$$type.type", ["group", "department", "faculty"]]
+                                                }
+                                            }
+                                        }
+                                    },
+                                    0
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+
+    cursor = col_person.aggregate(pipeline, allowDiskUse=True)
 
     batch = []
     for i, doc in enumerate(cursor, start=1):
