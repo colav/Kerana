@@ -5,6 +5,178 @@ from elasticsearch.helpers import bulk
 person_mapping = {"mappings": {"properties": {
     "full_name": {"type": "completion"}}}}
 
+affiliations_mapping = {"mappings": {
+    "properties": {"name": {"type": "completion"}}}}
+
+
+def get_affiliations_weight(affiliation_type: str, addresses: list[dict]) -> int:
+    """
+    Calculate the weight of an affiliation based on its type and the presence of addresses.
+    The weight is assigned as follows:
+    - institution: 10 if country_code is CO, otherwise 0
+
+    Parameters:
+    ------------
+    affiliation_type:str
+        Type of the affiliation, options are:
+        - institution
+        - group
+        - department
+        - faculty
+    addresses:list
+        List of addresses of the affiliation
+    Returns:
+    ------------
+    int
+        Weight of the affiliation
+    """
+    if affiliation_type == "institution":
+        sources = {entry["country_code"] for entry in addresses}
+        if "CO" in sources:
+            return 10
+        else:
+            return 0
+    return 0
+
+
+def format_affiliations_documents(index_name: str, docs: list, affiliation_type: str) -> list:
+    """
+    Create a list of documents to be indexed in ElasticSearch.
+    Each document contains a name and its corresponding weight.
+
+    Parameters:
+    ------------
+    docs:list
+        List of documents to be indexed
+    index_name:str
+        ElasticSearch index name
+    affiliation_type:str
+        Type of the affiliation, options are:
+        - institution
+        - group
+        - department
+        - faculty
+    Returns:
+    ------------
+    list
+        List of formatted documents ready for indexing
+    """
+    data = []
+    connectors = {}
+    connectors["es"] = [
+        " de ",
+        " De ",
+        " del ",
+        " Del ",
+        " la ",
+        " La ",
+        " las ",
+        " Las ",
+    ]
+    connectors["en"] = [" of ", " Of ", " the ", " The "]
+    for doc in docs:
+        names = []
+        for name in doc["names"]:
+            names.append(name["name"])
+            _name = name["name"]
+            for con in connectors[name["lang"]]:
+                _name = _name.replace(con, " ")
+            names.extend(_name.split())
+        if "abbreviations" in doc:
+            names.extend(doc["abbreviations"])
+        names = list(set(names))
+        data.append(
+            {
+                "_op_type": "index",
+                "_index": index_name,
+                "_id": str(doc["_id"]),
+                "_source": {
+                    "name": {
+                        "input": names,
+                        "weight": get_affiliations_weight(
+                            affiliation_type, doc["addresses"]
+                        ),
+                    },
+                    "type": doc["types"],
+                },
+            }
+        )
+    return data
+
+
+def affiliations_completer_indexer(
+    affiliation_type: str,
+    es: Elasticsearch,
+    es_index: str,
+    mdb_client: MongoClient,
+    mdb_name: str,
+    mdb_col: str,
+    bulk_size: int = 100,
+    reset_esindex: bool = True,
+    request_timeout: int = 60,
+) -> None:
+    if reset_esindex:
+        if es.indices.exists(index=es_index):
+            es.indices.delete(index=es_index)
+
+    if not es.indices.exists(index=es_index):
+        es.indices.create(index=es_index, body=affiliations_mapping)
+
+    col_aff = mdb_client[mdb_name][mdb_col]
+    pipeline = []
+    if affiliation_type == "institution":
+        pipeline = [
+            {"$match": {"types.type": {
+                "$nin": ["group", "faculty", "department"]}}},
+            {
+                "$project": {
+                    "names": 1,
+                    "addresses.country_code": 1,
+                    "types": 1,
+                    "abbreviations": 1,
+                }
+            },
+            {
+                "$set": {
+                    "names": {
+                        "$filter": {
+                            "input": "$names",
+                            "as": "name",
+                            "cond": {"$in": ["$$name.lang", ["es", "en"]]},
+                        }
+                    }
+                }
+            },
+        ]
+    cursor = col_aff.aggregate(pipeline, allowDiskUse=True)
+
+    batch = []
+    for i, doc in enumerate(cursor, start=1):
+        batch.append(doc)
+
+        if i % bulk_size == 0:
+            bulk(
+                es,
+                format_affiliations_documents(
+                    es_index, batch, affiliation_type),
+                refresh=True,
+                request_timeout=request_timeout,
+            )
+            print(f"Inserted {i} documents...")
+            batch = []
+
+    # Insert remaining documents in the last batch
+    if batch:
+        bulk(
+            es,
+            format_affiliations_documents(es_index, batch, affiliation_type),
+            refresh=True,
+            request_timeout=request_timeout,
+        )
+        print(f"Inserted {i} documents in total.")
+
+    print("Process completed.")
+
 
 def get_person_weight(updated: list[dict], affiliations: list) -> int:
     """
@@ -155,19 +327,37 @@ def person_completer_indexer(
                                                 "input": "$$affiliation.types",
                                                 "as": "type",
                                                 "cond": {
-                                                    "$in": ["$$type.type", ["group", "department", "faculty"]]
-                                                }
+                                                    "$in": [
+                                                        "$$type.type",
+                                                        [
+                                                            "group",
+                                                            "department",
+                                                            "faculty",
+                                                        ],
+                                                    ]
+                                                },
                                             }
                                         }
                                     },
-                                    0
+                                    0,
                                 ]
                             }
-                        }
+                        },
                     }
-                }
+                },
             }
-        }
+        },
+        {
+            "$project": {
+                "full_name": 1,
+                "first_names": 1,
+                "last_names": 1,
+                "updated": 1,
+                "products_count": 1,
+                "affiliations.id": 1,
+                "affiliations.name": 1,
+            }
+        },
     ]
 
     cursor = col_person.aggregate(pipeline, allowDiskUse=True)

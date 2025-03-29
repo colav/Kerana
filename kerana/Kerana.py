@@ -6,7 +6,7 @@ import sys
 import json
 from bson import ObjectId
 
-from kerana.completer import person_completer_indexer
+from kerana.completer import person_completer_indexer, affiliations_completer_indexer
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -60,6 +60,18 @@ class Kerana:
                 bulk_size=bulk_size,
                 reset_esindex=reset_esindex,
                 request_timeout=request_timeout
+            )
+        elif entity == "institution":
+            affiliations_completer_indexer(
+                affiliation_type=entity,
+                es=self.es,
+                es_index=es_index,
+                mdb_client=self.client,
+                mdb_name=mdb_name,
+                mdb_col=mdb_col,
+                bulk_size=bulk_size,
+                reset_esindex=reset_esindex,
+                request_timeout=request_timeout,
             )
 
     def mdb2es(self, mdb_name: str, mdb_col: str, es_index: str,
