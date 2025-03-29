@@ -85,22 +85,22 @@ def format_affiliations_documents(index_name: str, docs: list, affiliation_type:
         if "abbreviations" in doc:
             names.extend(doc["abbreviations"])
         names = list(set(names))
-        data.append(
-            {
-                "_op_type": "index",
-                "_index": index_name,
-                "_id": str(doc["_id"]),
-                "_source": {
-                    "name": {
-                        "input": names,
-                        "weight": get_affiliations_weight(
-                            affiliation_type, doc["addresses"]
-                        ),
-                    },
-                    "type": doc["types"],
-                },
+        rec = {
+            "_op_type": "index",
+            "_index": index_name,
+            "_id": str(doc["_id"]),  # Convertir ObjectId a string
+            "_source": {
+                "name": {"input": names},  # Estructura para 'completion'
+                "types": doc["types"],
             }
-        )
+        }
+        if affiliation_type == "institution":
+            rec["_source"]["name"]["weight"] = get_affiliations_weight(
+                affiliation_type, doc["addresses"]
+            )
+        if affiliation_type in ["group", "faculty", "department"]:
+            rec["_source"]["relations"] = doc["relations"]
+        data.append(rec)
     return data
 
 
@@ -144,6 +144,19 @@ def affiliations_completer_indexer(
                             "as": "name",
                             "cond": {"$in": ["$$name.lang", ["es", "en"]]},
                         }
+                    }
+                }
+            },
+        ]
+
+    if affiliation_type in ["group", "faculty", "department"]:
+        pipeline = [
+            {"$match": {"types.type": affiliation_type}},
+            {"$project": {"names": 1, "types": 1, "relations": 1}},
+            {
+                "$addFields": {
+                    "relations": {
+                        "$map": {"input": "$relations", "as": "rel", "in": "$$rel.name"}
                     }
                 }
             },

@@ -61,7 +61,7 @@ class Kerana:
                 reset_esindex=reset_esindex,
                 request_timeout=request_timeout
             )
-        elif entity == "institution":
+        if entity in ["group", "faculty", "department", "institution"]:
             affiliations_completer_indexer(
                 affiliation_type=entity,
                 es=self.es,

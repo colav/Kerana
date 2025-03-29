@@ -47,6 +47,7 @@ args = parser.parse_args()
 if __name__ == '__main__':
     es_basic_auth = (args.es_user, args.es_pass)
     kerana = Kerana(args.es_uri, es_basic_auth, args.mdb_uri)
-
+    
     kerana.completer(args.entity, args.mdb_name, args.mdb_col, args.es_index,
                   args.bulk_size, args.reset_esindex, args.request_timeout)
+    
