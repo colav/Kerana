@@ -24,7 +24,7 @@ parser.add_argument('--es_pass', type=str, default="colav",
 parser.add_argument('--es_index', type=str,
                     help='Elastic Search index')
 
-parser.add_argument('--bulk_size', type=int, default=10,
+parser.add_argument('--bulk_size', type=int, default=100,
                     help='Elastic Search bulk size to insert documents')
 
 parser.add_argument('--mdb_uri', type=str, default="mongodb://localhost:27017/",

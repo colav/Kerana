@@ -264,13 +264,21 @@ def format_person_documents(index_name: str, docs: list) -> list:
     """
     data = []
     for doc in docs:
-        names = [doc["full_name"]]
+        names = [doc["full_name"], unidecode(doc["full_name"])]
+
         for name in doc["first_names"]:
             names.append(name + " " + " ".join(doc["last_names"]))
+            names.append(unidecode(name) + " " +
+                         unidecode(" ".join(doc["last_names"])))
         names.append(" ".join(doc["last_names"]))
+        names.append(unidecode(" ".join(doc["last_names"])))
         if len(doc["first_names"]) > 0 and len(doc["last_names"]) > 0:
             names.append(f"{doc['last_names'][0]} {doc['first_names'][0]}")
             names.append(f"{doc['first_names'][0]} {doc['last_names'][0]}")
+            names.append(
+                unidecode(f"{doc['last_names'][0]} {doc['first_names'][0]}"))
+            names.append(
+                unidecode(f"{doc['first_names'][0]} {doc['last_names'][0]}"))
         names = list(set(names))
         data.append(
             {
