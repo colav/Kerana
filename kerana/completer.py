@@ -1,6 +1,8 @@
 from elasticsearch import Elasticsearch
 from pymongo import MongoClient
 from elasticsearch.helpers import bulk
+from unidecode import unidecode
+
 
 person_mapping = {"mappings": {"properties": {
     "full_name": {"type": "completion"}}}}
@@ -76,12 +78,23 @@ def format_affiliations_documents(index_name: str, docs: list, affiliation_type:
     connectors["en"] = [" of ", " Of ", " the ", " The "]
     for doc in docs:
         names = []
+        full_name = ""
         for name in doc["names"]:
             names.append(name["name"])
+            names.append(unidecode(name["name"]))
             _name = name["name"]
             for con in connectors[name["lang"]]:
                 _name = _name.replace(con, " ")
-            names.extend(_name.split())
+            names = list(set(names))
+            _sname = _name.split()
+            _suname = unidecode(_name).split()
+            names.extend(_sname)
+            names.extend(_suname)
+            for i in range(len(_sname)):
+                names.append(" ".join(_sname[i:]))
+                names.append(" ".join(_suname[i:]))
+            if name["lang"] == "es":
+                full_name = _name
         if "abbreviations" in doc:
             names.extend(doc["abbreviations"])
         names = list(set(names))
@@ -92,6 +105,7 @@ def format_affiliations_documents(index_name: str, docs: list, affiliation_type:
             "_source": {
                 "name": {"input": names},  # Estructura para 'completion'
                 "types": doc["types"],
+                "full_name": full_name,
             }
         }
         if affiliation_type == "institution":
