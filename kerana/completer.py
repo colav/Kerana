@@ -97,6 +97,11 @@ def format_affiliations_documents(index_name: str, docs: list, affiliation_type:
                 full_name = _name
         if "abbreviations" in doc:
             names.extend(doc["abbreviations"])
+        country_code = ""
+        if "addresses" in doc:
+            for address in doc["addresses"]:
+                if "country_code" in address:
+                    country_code = address["country_code"]
         names = list(set(names))
         rec = {
             "_op_type": "index",
@@ -106,12 +111,13 @@ def format_affiliations_documents(index_name: str, docs: list, affiliation_type:
                 "name": {"input": names},  # Estructura para 'completion'
                 "types": doc["types"],
                 "full_name": full_name,
-            }
+            },
         }
         if affiliation_type == "institution":
             rec["_source"]["name"]["weight"] = get_affiliations_weight(
                 affiliation_type, doc["addresses"]
             )
+            rec["_source"]["country_code"] = country_code
         if affiliation_type in ["group", "faculty", "department"]:
             rec["_source"]["relations"] = doc["relations"]
         data.append(rec)
