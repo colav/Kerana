@@ -29,6 +29,15 @@ kerana --es_index scienti_udea_2022_network --mdb_name scienti_udea_2022 --mdb_c
 kerana --es_index scienti_udea_2022_event   --mdb_name scienti_udea_2022 --mdb_col event   --bulk_size 100
 ```
 
+# Usage Completer
+```
+kerana_completer --entity person --es_user elastic  --es_pass mypass --es_index kahi_dev_person --mdb_name kahi_dev --mdb_col person --bulk_size 1000
+kerana_completer --entity institution --es_user elastic  --es_pass mypass --es_index kahi_dev_institution --mdb_name kahi_dev --mdb_col affiliations --bulk_size 1000
+kerana_completer --entity group --es_user elastic  --es_pass mypass --es_index kahi_dev_group --mdb_name kahi_dev --mdb_col affiliations --bulk_size 1000
+kerana_completer --entity faculty --es_user elastic  --es_pass mypass --es_index kahi_dev_faculty --mdb_name kahi_dev --mdb_col affiliations --bulk_size 1000
+kerana_completer --entity department --es_user elastic  --es_pass mypass --es_index kahi_dev_department --mdb_name kahi_dev --mdb_col affiliations --bulk_size 1000
+
+```
 # TODO
 * selective fields from MongoDB to ES
 * Search text in ES and resolve from ids in MongoDB

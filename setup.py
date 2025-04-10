@@ -69,7 +69,7 @@ def main():
         # Details
         url="https://github.com/colav/Kerana",
 
-        scripts=['bin/kerana'],
+        scripts=['bin/kerana', 'bin/kerana_completer'],
         #
         license="BSD",
 

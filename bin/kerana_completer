@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+
+from kerana.Kerana import Kerana
+import argparse
+import importlib
+import sys
+
+
+parser = argparse.ArgumentParser(
+    description='Kerana / MongoDB and ElasticSearch Tools. Completer.')
+
+parser.add_argument(
+    "--entity", type=str,  help="Kahi entity to complete, options are: person", required=True)
+
+parser.add_argument('--es_uri', type=str, default="http://localhost:9200",
+                    help='Elastic Search URI')
+
+parser.add_argument('--es_user', type=str, default="elastic",
+                    help='Elastic Search user')
+
+parser.add_argument('--es_pass', type=str, default="colav",
+                    help='Elastic Search password')
+
+parser.add_argument('--es_index', type=str,
+                    help='Elastic Search index')
+
+parser.add_argument('--bulk_size', type=int, default=100,
+                    help='Elastic Search bulk size to insert documents')
+
+parser.add_argument('--mdb_uri', type=str, default="mongodb://localhost:27017/",
+                    help='MongoDB URI')
+
+parser.add_argument('--mdb_name', type=str,
+                    help='MongoDB name')
+
+parser.add_argument('--mdb_col', type=str,
+                    help='MongoDB collection')
+
+parser.add_argument('--reset_esindex', type=bool, default=True,
+                    help='Reset Elastic Search index')
+
+parser.add_argument('--request_timeout', type=int, default=60,
+                    help='Reset Elastic request timeout')
+
+args = parser.parse_args()
+
+if __name__ == '__main__':
+    es_basic_auth = (args.es_user, args.es_pass)
+    kerana = Kerana(args.es_uri, es_basic_auth, args.mdb_uri)
+    
+    kerana.completer(args.entity, args.mdb_name, args.mdb_col, args.es_index,
+                  args.bulk_size, args.reset_esindex, args.request_timeout)
+    
