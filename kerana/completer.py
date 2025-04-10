@@ -94,7 +94,7 @@ def format_affiliations_documents(index_name: str, docs: list, affiliation_type:
                 names.append(" ".join(_sname[i:]))
                 names.append(" ".join(_suname[i:]))
             if name["lang"] == "es":
-                full_name = _name
+                full_name = name["name"]
         if "abbreviations" in doc:
             names.extend(doc["abbreviations"])
         country_code = ""
