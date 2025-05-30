@@ -45,6 +45,14 @@ kerana_completer --entity department --es_user elastic  --es_pass mypass --es_in
 * restore/backup ES indexes
 * support for config input to execute flows
 
+# ES diagnostic
+if the process fails run 
+
+```
+curl -u elastic:pass -X GET http://localhost:9200/_cluster/health?pretty
+curl -u elastic:pass -X GET http://localhost:9200/_cluster/allocation/explain?pretty
+```
+
 # License
 BSD-3-Clause License 
 
