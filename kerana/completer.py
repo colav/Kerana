@@ -13,7 +13,7 @@ affiliations_mapping = {"mappings": {
 sources_mapping = {
     "mappings": {
         "properties": {
-            "name": {"type": "text"},
+            "name": {"type": "completion"},
             "publisher": {"type": "text"},
             "products_count": {"type": "integer"}
         }
@@ -470,7 +470,7 @@ def format_sources_documents(index_name: str, docs: list) -> list:
                 "_index": index_name,
                 "_id": str(doc["_id"]),  # Convertir ObjectId a string
                 "_source": {
-                    "name": name,
+                    "name": {"input": [name, unidecode(name)]},
                     "publisher": publisher_name,
                     "products_count": doc.get("products_count", 0),
                 },
