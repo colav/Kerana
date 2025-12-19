@@ -85,7 +85,8 @@ def main():
             'pymongo',
             'elasticsearch',
             'elasticsearch_dsl',
-            'progress'
+            'progress',
+            'unidecode',
         ],
     )
 

@@ -10,6 +10,15 @@ person_mapping = {"mappings": {"properties": {
 affiliations_mapping = {"mappings": {
     "properties": {"name": {"type": "completion"}}}}
 
+sources_mapping = {
+    "mappings": {
+        "properties": {
+            "name": {"type": "completion"},
+            "publisher": {"type": "text"},
+            "products_count": {"type": "integer"}
+        }
+    }
+}
 
 def get_affiliations_weight(affiliation_type: str, addresses: list[dict]) -> int:
     """
@@ -422,6 +431,142 @@ def person_completer_indexer(
         bulk(
             es,
             format_person_documents(es_index, batch),
+            refresh=True,
+            request_timeout=request_timeout,
+        )
+        print(f"Inserted {i} documents in total.")
+
+    print("Process completed.")
+
+
+def format_sources_documents(index_name: str, docs: list) -> list:
+    """
+    Create a list of documents to be indexed in ElasticSearch.
+    Each document contains source name, publisher and products_count.
+
+    Parameters:
+    ------------
+    index_name:str
+        ElasticSearch index name
+    docs:list
+        List of documents to be indexed
+    Returns:
+    ------------
+    list
+        List of formatted documents ready for indexing
+    """
+    data = []
+    for doc in docs:
+        name = ""
+        if doc.get("names") and len(doc["names"]) > 0:
+            first_name = doc["names"][0].get("name", "")
+            if isinstance(first_name, str):
+                name = first_name.strip()
+
+        publisher_name = ""
+        publisher = doc.get("publisher")
+        if publisher:
+            if isinstance(publisher, dict):
+                pub_name = publisher.get("name", "")
+                if isinstance(pub_name, str):
+                    publisher_name = pub_name.strip()
+            elif isinstance(publisher, str):
+                publisher_name = publisher.strip()
+        
+        products_count = doc.get("products_count")
+        if products_count is None or not isinstance(products_count, (int, float)):
+            products_count = 0
+        else:
+            products_count = int(products_count)
+
+        data.append(
+            {
+                "_op_type": "index",
+                "_index": index_name,
+                "_id": str(doc["_id"]),  # Convertir ObjectId a string
+                "_source": {
+                    "name": {"input": [name, unidecode(name)]},
+                    "publisher": publisher_name,
+                    "products_count": doc.get("products_count", 0),
+                },
+            }
+        )
+    
+    return data
+
+
+def sources_completer_indexer(
+    es: Elasticsearch,
+    es_index: str,
+    mdb_client: MongoClient,
+    mdb_name: str,
+    mdb_col: str,
+    bulk_size: int = 100,
+    reset_esindex: bool = True,
+    request_timeout: int = 60,
+) -> None:
+    """
+    Create an index for sources name completion in ElasticSearch.
+
+    Parameters:
+    ------------
+    es:ElasticSearch
+        ElasticSearch client
+    es_index:str
+        ElasticSearch index name
+    mdb_client:MongoClient
+        MongoDB client
+    mdb_name:str
+        Mongo database name
+    mdb_col:str
+        Mongo collection name (should be 'sources')
+    bulk_size:int=100
+        bulk cache size to insert document in ES.
+    reset_esindex:bool
+        reset the index before insert documents
+    request_timeout:int
+        request timeout for ElasticSearch
+    """
+    
+    if reset_esindex:
+        if es.indices.exists(index=es_index):
+            es.indices.delete(index=es_index)
+
+    if not es.indices.exists(index=es_index):
+        es.indices.create(index=es_index, body=sources_mapping)
+
+    col_sources = mdb_client[mdb_name][mdb_col]
+    
+    pipeline = [
+        {
+            "$project": {
+                "names.name": 1,
+                "publisher.name": 1,
+                "products_count": 1,
+            }
+        }
+    ]
+
+    cursor = col_sources.aggregate(pipeline, allowDiskUse=True)
+
+    batch = []
+    for i, doc in enumerate(cursor, start=1):
+        batch.append(doc)
+
+        if i % bulk_size == 0:
+            bulk(
+                es,
+                format_sources_documents(es_index, batch),
+                refresh=True,
+                request_timeout=request_timeout,
+            )
+            print(f"Inserted {i} documents...")
+            batch = []
+
+    if batch:
+        bulk(
+            es,
+            format_sources_documents(es_index, batch),
             refresh=True,
             request_timeout=request_timeout,
         )

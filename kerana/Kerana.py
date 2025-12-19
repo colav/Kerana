@@ -6,7 +6,7 @@ import sys
 import json
 from bson import ObjectId
 
-from kerana.completer import person_completer_indexer, affiliations_completer_indexer
+from kerana.completer import person_completer_indexer, affiliations_completer_indexer, sources_completer_indexer
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -37,6 +37,8 @@ class Kerana:
         Create an index for person name completion in ElasticSearch.
         Parameters:
         ------------
+        entity:str
+            Entity type: person, group, faculty, department, institution, sources
         mdb_name:str
             Mongo database name
         mdb_col:str
@@ -61,9 +63,20 @@ class Kerana:
                 reset_esindex=reset_esindex,
                 request_timeout=request_timeout
             )
-        if entity in ["group", "faculty", "department", "institution"]:
+        elif entity in ["group", "faculty", "department", "institution"]:
             affiliations_completer_indexer(
                 affiliation_type=entity,
+                es=self.es,
+                es_index=es_index,
+                mdb_client=self.client,
+                mdb_name=mdb_name,
+                mdb_col=mdb_col,
+                bulk_size=bulk_size,
+                reset_esindex=reset_esindex,
+                request_timeout=request_timeout,
+            )
+        elif entity == "sources":
+            sources_completer_indexer(
                 es=self.es,
                 es_index=es_index,
                 mdb_client=self.client,
