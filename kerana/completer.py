@@ -459,11 +459,26 @@ def format_sources_documents(index_name: str, docs: list) -> list:
     for doc in docs:
         name = ""
         if doc.get("names") and len(doc["names"]) > 0:
-            name = doc["names"][0].get("name", "")
+            first_name = doc["names"][0].get("name", "")
+            if isinstance(first_name, str):
+                name = first_name.strip()
+
         publisher_name = ""
-        if doc.get("publisher"):
-            publisher_name = doc["publisher"].get("name", "")
+        publisher = doc.get("publisher")
+        if publisher:
+            if isinstance(publisher, dict):
+                pub_name = publisher.get("name", "")
+                if isinstance(pub_name, str):
+                    publisher_name = pub_name.strip()
+            elif isinstance(publisher, str):
+                publisher_name = publisher.strip()
         
+        products_count = doc.get("products_count")
+        if products_count is None or not isinstance(products_count, (int, float)):
+            products_count = 0
+        else:
+            products_count = int(products_count)
+
         data.append(
             {
                 "_op_type": "index",
