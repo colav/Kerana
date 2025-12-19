@@ -14,7 +14,7 @@ sources_mapping = {
     "mappings": {
         "properties": {
             "name": {"type": "text"},
-            "publisher": {"type": "object"},
+            "publisher": {"type": "text"},
             "products_count": {"type": "integer"}
         }
     }
@@ -460,6 +460,9 @@ def format_sources_documents(index_name: str, docs: list) -> list:
         name = ""
         if doc.get("names") and len(doc["names"]) > 0:
             name = doc["names"][0].get("name", "")
+        publisher_name = ""
+        if doc.get("publisher"):
+            publisher_name = doc["publisher"].get("name", "")
         
         data.append(
             {
@@ -468,7 +471,7 @@ def format_sources_documents(index_name: str, docs: list) -> list:
                 "_id": str(doc["_id"]),  # Convertir ObjectId a string
                 "_source": {
                     "name": name,
-                    "publisher": doc.get("publisher", None),
+                    "publisher": publisher_name,
                     "products_count": doc.get("products_count", 0),
                 },
             }
@@ -523,7 +526,7 @@ def sources_completer_indexer(
         {
             "$project": {
                 "names.name": 1,
-                "publisher": 1,
+                "publisher.name": 1,
                 "products_count": 1,
             }
         }
