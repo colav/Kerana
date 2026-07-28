@@ -1,6 +1,13 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import datetime, timezone
+import re
+
 from elasticsearch import Elasticsearch
 from pymongo import MongoClient
-from elasticsearch.helpers import bulk
+from pymongo.read_concern import ReadConcern
+from elasticsearch.helpers import bulk, scan
 from unidecode import unidecode
 
 
@@ -19,6 +26,238 @@ sources_mapping = {
         }
     }
 }
+
+
+def _utc_run_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def build_versioned_index_name(alias: str, run_id: str | None = None) -> str:
+    """Return a safe physical index name for a versioned build."""
+    run_id = run_id or _utc_run_id()
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", run_id):
+        raise ValueError("run_id may only contain letters, numbers, '.', '_' and '-'")
+    return f"{alias}-{run_id}".lower()
+
+
+def _source_inputs(doc: dict) -> list[str]:
+    """Build unique completion inputs from every valid source name."""
+    inputs = []
+    seen = set()
+    for item in doc.get("names", []):
+        value = item.get("name") if isinstance(item, dict) else item
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value:
+            continue
+        for candidate in (value, unidecode(value)):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                inputs.append(candidate)
+    return inputs
+
+
+def _source_publisher(doc: dict) -> str:
+    publisher = doc.get("publisher")
+    if isinstance(publisher, dict):
+        publisher = publisher.get("name", "")
+    return publisher.strip() if isinstance(publisher, str) else ""
+
+
+def _source_products_count(doc: dict) -> int:
+    value = doc.get("products_count", 0)
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def format_source_document(index_name: str, doc: dict) -> dict | None:
+    """Format one source or return None when it has no searchable name."""
+    inputs = _source_inputs(doc)
+    if not inputs:
+        return None
+    products_count = _source_products_count(doc)
+    return {
+        "_op_type": "index",
+        "_index": index_name,
+        "_id": str(doc["_id"]),
+        "_source": {
+            "name": {"input": inputs},
+            "publisher": _source_publisher(doc),
+            "products_count": products_count,
+        },
+    }
+
+
+def _publish_alias(es: Elasticsearch, alias: str, new_index: str) -> list[str]:
+    """Publish a validated index and return the previously aliased indices."""
+    previous = []
+    actions = []
+    if es.indices.exists_alias(name=alias):
+        previous = list(es.indices.get_alias(name=alias).keys())
+        actions.extend(
+            {"remove": {"index": index, "alias": alias}}
+            for index in previous
+        )
+    elif es.indices.exists(index=alias):
+        # One-time migration from a concrete index to an alias with the same name.
+        previous = [alias]
+        actions.append({"remove_index": {"index": alias}})
+    actions.append({"add": {"index": new_index, "alias": alias}})
+    es.indices.update_aliases(actions=actions)
+    return previous
+
+
+def _run_completer_indexer(
+    *,
+    entity: str,
+    es: Elasticsearch,
+    es_index: str,
+    mapping: dict,
+    mdb_client: MongoClient,
+    mdb_name: str,
+    mdb_col: str,
+    pipeline: list,
+    format_documents,
+    bulk_size: int,
+    reset_esindex: bool,
+    request_timeout: int,
+    versioned: bool,
+    run_id: str | None,
+    snapshot_read: bool,
+    validate: bool,
+) -> dict:
+    """Build, reconcile and optionally publish one completer index."""
+    if bulk_size <= 0:
+        raise ValueError("bulk_size must be greater than zero")
+
+    physical_index = (
+        build_versioned_index_name(es_index, run_id)
+        if versioned
+        else es_index
+    )
+    if versioned and es.indices.exists(index=physical_index):
+        raise ValueError(f"Physical index already exists: {physical_index}")
+
+    if not versioned and reset_esindex and es.indices.exists(index=physical_index):
+        es.indices.delete(index=physical_index)
+
+    index_definition = deepcopy(mapping)
+    index_definition.setdefault("settings", {})["refresh_interval"] = "-1"
+    index_definition["mappings"]["_meta"] = {
+        "kerana_entity": entity,
+        "source_database": mdb_name,
+        "source_collection": mdb_col,
+        "run_id": run_id or physical_index.rsplit("-", 1)[-1],
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    created = False
+    if not es.indices.exists(index=physical_index):
+        es.indices.create(index=physical_index, body=index_definition)
+        created = True
+
+    processed = 0
+    indexed = 0
+    skipped = 0
+    source_ids = set()
+    batch = []
+
+    def insert_batch(documents):
+        nonlocal indexed, skipped
+        actions = format_documents(physical_index, documents)
+        skipped += len(documents) - len(actions)
+        if not actions:
+            return
+        successful, failed = bulk(
+            es,
+            actions,
+            refresh=False,
+            request_timeout=request_timeout,
+            stats_only=True,
+            raise_on_error=True,
+        )
+        if failed:
+            raise RuntimeError(f"Elasticsearch bulk reported {failed} failures")
+        indexed += successful
+        source_ids.update(action["_id"] for action in actions)
+
+    try:
+        collection = mdb_client[mdb_name][mdb_col]
+        if snapshot_read:
+            collection = collection.with_options(
+                read_concern=ReadConcern("snapshot")
+            )
+        cursor = collection.aggregate(pipeline, allowDiskUse=True)
+
+        for doc in cursor:
+            processed += 1
+            batch.append(doc)
+            if len(batch) == bulk_size:
+                insert_batch(batch)
+                print(f"Processed {processed} documents...")
+                batch = []
+        if batch:
+            insert_batch(batch)
+
+        es.indices.put_settings(
+            index=physical_index,
+            body={"index": {"refresh_interval": "1s"}},
+        )
+        es.indices.refresh(index=physical_index)
+
+        elastic_count = es.count(index=physical_index)["count"]
+        if validate:
+            elastic_ids = {
+                str(hit["_id"])
+                for hit in scan(
+                    es,
+                    index=physical_index,
+                    query={"query": {"match_all": {}}},
+                    _source=False,
+                    request_timeout=request_timeout,
+                )
+            }
+            missing = source_ids - elastic_ids
+            orphaned = elastic_ids - source_ids
+            if elastic_count != indexed or missing or orphaned:
+                raise RuntimeError(
+                    f"{entity} index validation failed: "
+                    f"expected={indexed}, actual={elastic_count}, "
+                    f"missing={len(missing)}, orphaned={len(orphaned)}, "
+                    f"missing_sample={sorted(missing)[:10]}, "
+                    f"orphaned_sample={sorted(orphaned)[:10]}"
+                )
+
+        previous_indices = []
+        if versioned:
+            previous_indices = _publish_alias(es, es_index, physical_index)
+
+        report = {
+            "entity": entity,
+            "alias": es_index if versioned else None,
+            "physical_index": physical_index,
+            "previous_indices": previous_indices,
+            "source_database": mdb_name,
+            "source_collection": mdb_col,
+            "processed": processed,
+            "indexed": indexed,
+            "skipped": skipped,
+            "elastic_count": elastic_count,
+            "validated": validate,
+            "published": True,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        print("Process completed.")
+        return report
+    except Exception:
+        if versioned and created and es.indices.exists(index=physical_index):
+            es.indices.delete(index=physical_index)
+        raise
+
 
 def get_affiliations_weight(affiliation_type: str, addresses: list[dict]) -> int:
     """
@@ -143,15 +382,11 @@ def affiliations_completer_indexer(
     bulk_size: int = 100,
     reset_esindex: bool = True,
     request_timeout: int = 60,
-) -> None:
-    if reset_esindex:
-        if es.indices.exists(index=es_index):
-            es.indices.delete(index=es_index)
-
-    if not es.indices.exists(index=es_index):
-        es.indices.create(index=es_index, body=affiliations_mapping)
-
-    col_aff = mdb_client[mdb_name][mdb_col]
+    versioned: bool = False,
+    run_id: str | None = None,
+    snapshot_read: bool = False,
+    validate: bool = True,
+) -> dict:
     pipeline = []
     if affiliation_type == "institution":
         pipeline = [
@@ -190,34 +425,26 @@ def affiliations_completer_indexer(
                 }
             },
         ]
-    cursor = col_aff.aggregate(pipeline, allowDiskUse=True)
-
-    batch = []
-    for i, doc in enumerate(cursor, start=1):
-        batch.append(doc)
-
-        if i % bulk_size == 0:
-            bulk(
-                es,
-                format_affiliations_documents(
-                    es_index, batch, affiliation_type),
-                refresh=True,
-                request_timeout=request_timeout,
-            )
-            print(f"Inserted {i} documents...")
-            batch = []
-
-    # Insert remaining documents in the last batch
-    if batch:
-        bulk(
-            es,
-            format_affiliations_documents(es_index, batch, affiliation_type),
-            refresh=True,
-            request_timeout=request_timeout,
-        )
-        print(f"Inserted {i} documents in total.")
-
-    print("Process completed.")
+    return _run_completer_indexer(
+        entity=affiliation_type,
+        es=es,
+        es_index=es_index,
+        mapping=affiliations_mapping,
+        mdb_client=mdb_client,
+        mdb_name=mdb_name,
+        mdb_col=mdb_col,
+        pipeline=pipeline,
+        format_documents=lambda index, documents: format_affiliations_documents(
+            index, documents, affiliation_type
+        ),
+        bulk_size=bulk_size,
+        reset_esindex=reset_esindex,
+        request_timeout=request_timeout,
+        versioned=versioned,
+        run_id=run_id,
+        snapshot_read=snapshot_read,
+        validate=validate,
+    )
 
 
 def get_person_weight(updated: list[dict], affiliations: list) -> int:
@@ -283,8 +510,8 @@ def format_person_documents(index_name: str, docs: list) -> list:
 
         for name in doc["first_names"]:
             names.append(name + " " + " ".join(doc["last_names"]))
-            names.append(unidecode(name) + " " +
-                         unidecode(" ".join(doc["last_names"])))
+            ascii_last_names = unidecode(" ".join(doc["last_names"]))
+            names.append(f"{unidecode(name)} {ascii_last_names}")
         names.append(" ".join(doc["last_names"]))
         names.append(unidecode(" ".join(doc["last_names"])))
         if len(doc["first_names"]) > 0 and len(doc["last_names"]) > 0:
@@ -324,7 +551,11 @@ def person_completer_indexer(
     bulk_size: int = 100,
     reset_esindex: bool = True,
     request_timeout: int = 60,
-) -> None:
+    versioned: bool = False,
+    run_id: str | None = None,
+    snapshot_read: bool = False,
+    validate: bool = True,
+) -> dict:
     """
     Create an index for person name completion in ElasticSearch.
 
@@ -348,14 +579,6 @@ def person_completer_indexer(
         request timeout for ElasticSearch
     """
 
-    if reset_esindex:
-        if es.indices.exists(index=es_index):
-            es.indices.delete(index=es_index)
-
-    if not es.indices.exists(index=es_index):
-        es.indices.create(index=es_index, body=person_mapping)
-
-    col_person = mdb_client[mdb_name][mdb_col]
     pipeline = [
         {
             "$project": {
@@ -410,33 +633,24 @@ def person_completer_indexer(
         },
     ]
 
-    cursor = col_person.aggregate(pipeline, allowDiskUse=True)
-
-    batch = []
-    for i, doc in enumerate(cursor, start=1):
-        batch.append(doc)
-
-        if i % bulk_size == 0:
-            bulk(
-                es,
-                format_person_documents(es_index, batch),
-                refresh=True,
-                request_timeout=request_timeout,
-            )
-            print(f"Inserted {i} documents...")
-            batch = []
-
-    # Insert remaining documents in the last batch
-    if batch:
-        bulk(
-            es,
-            format_person_documents(es_index, batch),
-            refresh=True,
-            request_timeout=request_timeout,
-        )
-        print(f"Inserted {i} documents in total.")
-
-    print("Process completed.")
+    return _run_completer_indexer(
+        entity="person",
+        es=es,
+        es_index=es_index,
+        mapping=person_mapping,
+        mdb_client=mdb_client,
+        mdb_name=mdb_name,
+        mdb_col=mdb_col,
+        pipeline=pipeline,
+        format_documents=format_person_documents,
+        bulk_size=bulk_size,
+        reset_esindex=reset_esindex,
+        request_timeout=request_timeout,
+        versioned=versioned,
+        run_id=run_id,
+        snapshot_read=snapshot_read,
+        validate=validate,
+    )
 
 
 def format_sources_documents(index_name: str, docs: list) -> list:
@@ -455,44 +669,11 @@ def format_sources_documents(index_name: str, docs: list) -> list:
     list
         List of formatted documents ready for indexing
     """
-    data = []
-    for doc in docs:
-        name = ""
-        if doc.get("names") and len(doc["names"]) > 0:
-            first_name = doc["names"][0].get("name", "")
-            if isinstance(first_name, str):
-                name = first_name.strip()
-
-        publisher_name = ""
-        publisher = doc.get("publisher")
-        if publisher:
-            if isinstance(publisher, dict):
-                pub_name = publisher.get("name", "")
-                if isinstance(pub_name, str):
-                    publisher_name = pub_name.strip()
-            elif isinstance(publisher, str):
-                publisher_name = publisher.strip()
-        
-        products_count = doc.get("products_count")
-        if products_count is None or not isinstance(products_count, (int, float)):
-            products_count = 0
-        else:
-            products_count = int(products_count)
-
-        data.append(
-            {
-                "_op_type": "index",
-                "_index": index_name,
-                "_id": str(doc["_id"]),  # Convertir ObjectId a string
-                "_source": {
-                    "name": {"input": [name, unidecode(name)]},
-                    "publisher": publisher_name,
-                    "products_count": doc.get("products_count", 0),
-                },
-            }
-        )
-    
-    return data
+    return [
+        formatted
+        for doc in docs
+        if (formatted := format_source_document(index_name, doc)) is not None
+    ]
 
 
 def sources_completer_indexer(
@@ -504,7 +685,11 @@ def sources_completer_indexer(
     bulk_size: int = 100,
     reset_esindex: bool = True,
     request_timeout: int = 60,
-) -> None:
+    versioned: bool = False,
+    run_id: str | None = None,
+    snapshot_read: bool = False,
+    validate: bool = True,
+) -> dict:
     """
     Create an index for sources name completion in ElasticSearch.
 
@@ -527,16 +712,7 @@ def sources_completer_indexer(
     request_timeout:int
         request timeout for ElasticSearch
     """
-    
-    if reset_esindex:
-        if es.indices.exists(index=es_index):
-            es.indices.delete(index=es_index)
 
-    if not es.indices.exists(index=es_index):
-        es.indices.create(index=es_index, body=sources_mapping)
-
-    col_sources = mdb_client[mdb_name][mdb_col]
-    
     pipeline = [
         {
             "$project": {
@@ -546,30 +722,21 @@ def sources_completer_indexer(
             }
         }
     ]
-
-    cursor = col_sources.aggregate(pipeline, allowDiskUse=True)
-
-    batch = []
-    for i, doc in enumerate(cursor, start=1):
-        batch.append(doc)
-
-        if i % bulk_size == 0:
-            bulk(
-                es,
-                format_sources_documents(es_index, batch),
-                refresh=True,
-                request_timeout=request_timeout,
-            )
-            print(f"Inserted {i} documents...")
-            batch = []
-
-    if batch:
-        bulk(
-            es,
-            format_sources_documents(es_index, batch),
-            refresh=True,
-            request_timeout=request_timeout,
-        )
-        print(f"Inserted {i} documents in total.")
-
-    print("Process completed.")
+    return _run_completer_indexer(
+        entity="sources",
+        es=es,
+        es_index=es_index,
+        mapping=sources_mapping,
+        mdb_client=mdb_client,
+        mdb_name=mdb_name,
+        mdb_col=mdb_col,
+        pipeline=pipeline,
+        format_documents=format_sources_documents,
+        bulk_size=bulk_size,
+        reset_esindex=reset_esindex,
+        request_timeout=request_timeout,
+        versioned=versioned,
+        run_id=run_id,
+        snapshot_read=snapshot_read,
+        validate=validate,
+    )
