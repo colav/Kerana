@@ -6,7 +6,7 @@ import sys
 import json
 from bson import ObjectId
 
-from kerana.completer import person_completer_indexer, affiliations_completer_indexer
+from kerana.completer import person_completer_indexer, affiliations_completer_indexer, sources_completer_indexer
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -32,11 +32,15 @@ class Kerana:
 
     def completer(self, entity, mdb_name: str, mdb_col: str, es_index: str,
                   bulk_size: int = 100, reset_esindex: bool = True,
-                  request_timeout: int = 60):
+                  request_timeout: int = 60, versioned: bool = False,
+                  run_id: str = None, snapshot_read: bool = False,
+                  validate: bool = True):
         """
         Create an index for person name completion in ElasticSearch.
         Parameters:
         ------------
+        entity:str
+            Entity type: person, group, faculty, department, institution, sources
         mdb_name:str
             Mongo database name
         mdb_col:str
@@ -51,7 +55,7 @@ class Kerana:
             request timeout for ElasticSearch
         """
         if entity == "person":
-            person_completer_indexer(
+            return person_completer_indexer(
                 es=self.es,
                 es_index=es_index,
                 mdb_client=self.client,
@@ -59,10 +63,14 @@ class Kerana:
                 mdb_col=mdb_col,
                 bulk_size=bulk_size,
                 reset_esindex=reset_esindex,
-                request_timeout=request_timeout
+                request_timeout=request_timeout,
+                versioned=versioned,
+                run_id=run_id,
+                snapshot_read=snapshot_read,
+                validate=validate,
             )
-        if entity in ["group", "faculty", "department", "institution"]:
-            affiliations_completer_indexer(
+        elif entity in ["group", "faculty", "department", "institution"]:
+            return affiliations_completer_indexer(
                 affiliation_type=entity,
                 es=self.es,
                 es_index=es_index,
@@ -72,7 +80,27 @@ class Kerana:
                 bulk_size=bulk_size,
                 reset_esindex=reset_esindex,
                 request_timeout=request_timeout,
+                versioned=versioned,
+                run_id=run_id,
+                snapshot_read=snapshot_read,
+                validate=validate,
             )
+        elif entity == "sources":
+            return sources_completer_indexer(
+                es=self.es,
+                es_index=es_index,
+                mdb_client=self.client,
+                mdb_name=mdb_name,
+                mdb_col=mdb_col,
+                bulk_size=bulk_size,
+                reset_esindex=reset_esindex,
+                request_timeout=request_timeout,
+                versioned=versioned,
+                run_id=run_id,
+                snapshot_read=snapshot_read,
+                validate=validate,
+            )
+        raise ValueError(f"Unsupported completer entity: {entity}")
 
     def mdb2es(self, mdb_name: str, mdb_col: str, es_index: str,
                bulk_size: int = 10, reset_esindex: bool = True,

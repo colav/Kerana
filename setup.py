@@ -82,10 +82,11 @@ def main():
         # Dependent packages (distributions)
         # put you packages here
         install_requires=[
-            'pymongo',
-            'elasticsearch',
-            'elasticsearch_dsl',
-            'progress'
+            'pymongo>=4,<5',
+            'elasticsearch>=8.17,<9',
+            'elasticsearch_dsl>=8,<9',
+            'progress',
+            'unidecode>=1.3,<2',
         ],
     )
 

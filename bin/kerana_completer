@@ -2,15 +2,19 @@
 
 from kerana.Kerana import Kerana
 import argparse
-import importlib
-import sys
+import json
+from pathlib import Path
 
 
 parser = argparse.ArgumentParser(
     description='Kerana / MongoDB and ElasticSearch Tools. Completer.')
 
 parser.add_argument(
-    "--entity", type=str,  help="Kahi entity to complete, options are: person", required=True)
+    "--entity",
+    choices=["person", "institution", "group", "faculty", "department", "sources"],
+    help="Kahi entity to index for autocomplete",
+    required=True,
+)
 
 parser.add_argument('--es_uri', type=str, default="http://localhost:9200",
                     help='Elastic Search URI')
@@ -21,8 +25,8 @@ parser.add_argument('--es_user', type=str, default="elastic",
 parser.add_argument('--es_pass', type=str, default="colav",
                     help='Elastic Search password')
 
-parser.add_argument('--es_index', type=str,
-                    help='Elastic Search index')
+parser.add_argument('--es_index', type=str, required=True,
+                    help='Elastic Search index or alias')
 
 parser.add_argument('--bulk_size', type=int, default=100,
                     help='Elastic Search bulk size to insert documents')
@@ -30,14 +34,49 @@ parser.add_argument('--bulk_size', type=int, default=100,
 parser.add_argument('--mdb_uri', type=str, default="mongodb://localhost:27017/",
                     help='MongoDB URI')
 
-parser.add_argument('--mdb_name', type=str,
+parser.add_argument('--mdb_name', type=str, required=True,
                     help='MongoDB name')
 
-parser.add_argument('--mdb_col', type=str,
+parser.add_argument('--mdb_col', type=str, required=True,
                     help='MongoDB collection')
 
-parser.add_argument('--reset_esindex', type=bool, default=True,
-                    help='Reset Elastic Search index')
+reset_group = parser.add_mutually_exclusive_group()
+reset_group.add_argument('--reset_esindex', '--reset-esindex',
+                         dest='reset_esindex', action='store_true',
+                         help='Reset a directly written Elastic Search index')
+reset_group.add_argument('--no-reset_esindex', '--no-reset-esindex',
+                         dest='reset_esindex', action='store_false',
+                         help='Do not reset a directly written index')
+parser.set_defaults(reset_esindex=True)
+
+version_group = parser.add_mutually_exclusive_group()
+version_group.add_argument('--versioned', dest='versioned', action='store_true',
+                           help='Build a versioned index and atomically publish the alias')
+version_group.add_argument('--no-versioned', dest='versioned', action='store_false',
+                           help='Write directly to --es_index (legacy mode)')
+parser.set_defaults(versioned=True)
+
+snapshot_group = parser.add_mutually_exclusive_group()
+snapshot_group.add_argument('--snapshot-read', dest='snapshot_read',
+                            action='store_true',
+                            help='Read MongoDB with snapshot read concern')
+snapshot_group.add_argument('--no-snapshot-read', dest='snapshot_read',
+                            action='store_false',
+                            help='Use the deployment default MongoDB read concern')
+parser.set_defaults(snapshot_read=False)
+
+validation_group = parser.add_mutually_exclusive_group()
+validation_group.add_argument('--validate', dest='validate', action='store_true',
+                              help='Reconcile indexed IDs before publishing')
+validation_group.add_argument('--no-validate', dest='validate', action='store_false',
+                              help='Skip ID reconciliation')
+parser.set_defaults(validate=True)
+
+parser.add_argument('--run-id', type=str,
+                    help='Version suffix; defaults to a UTC timestamp')
+
+parser.add_argument('--report-file', type=Path,
+                    help='Optional path for the JSON build report')
 
 parser.add_argument('--request_timeout', type=int, default=60,
                     help='Reset Elastic request timeout')
@@ -47,7 +86,22 @@ args = parser.parse_args()
 if __name__ == '__main__':
     es_basic_auth = (args.es_user, args.es_pass)
     kerana = Kerana(args.es_uri, es_basic_auth, args.mdb_uri)
-    
-    kerana.completer(args.entity, args.mdb_name, args.mdb_col, args.es_index,
-                  args.bulk_size, args.reset_esindex, args.request_timeout)
-    
+
+    report = kerana.completer(
+        args.entity,
+        args.mdb_name,
+        args.mdb_col,
+        args.es_index,
+        args.bulk_size,
+        args.reset_esindex,
+        args.request_timeout,
+        versioned=args.versioned,
+        run_id=args.run_id,
+        snapshot_read=args.snapshot_read,
+        validate=args.validate,
+    )
+    if report:
+        output = json.dumps(report, ensure_ascii=False, indent=2)
+        print(output)
+        if args.report_file:
+            args.report_file.write_text(output + "\n", encoding="utf-8")

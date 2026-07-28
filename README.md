@@ -38,6 +38,57 @@ kerana_completer --entity faculty --es_user elastic  --es_pass mypass --es_index
 kerana_completer --entity department --es_user elastic  --es_pass mypass --es_index kahi_dev_department --mdb_name kahi_dev --mdb_col affiliations --bulk_size 1000
 
 ```
+
+## Safe completer rebuilds
+
+Completers must be indexed after the Kahi workflow has finished all merges,
+cleanup, post-calculations, and the definitive MongoDB database has been
+promoted. This applies to `person`, `sources`, and every affiliation type.
+
+By default the command builds a physical versioned index, validates its IDs
+and count, and only then publishes it through the requested alias:
+
+```
+kerana_completer \
+  --entity sources \
+  --es_uri http://localhost:9200 \
+  --es_user elastic \
+  --es_pass mypass \
+  --es_index kahi_sources \
+  --mdb_uri mongodb://localhost:27017/ \
+  --mdb_name kahi \
+  --mdb_col sources \
+  --bulk_size 1000 \
+  --versioned \
+  --no-snapshot-read \
+  --validate \
+  --report-file kerana_sources_report.json
+```
+
+For people, use the same command with `--entity person`, `--mdb_col person`,
+`--es_index kahi_person`, and a different report file.
+
+The physical index is named `<alias>-<UTC timestamp>`. Existing aliases remain
+unchanged if loading or validation fails. On the first run, a concrete index
+with the alias name is replaced only after the new index validates
+successfully. Later runs keep the previously aliased physical index available
+for rollback.
+
+The default `--no-snapshot-read` is appropriate for an immutable, already
+promoted standalone database. Use `--snapshot-read` only with a MongoDB
+deployment that supports read concern `snapshot`.
+
+`--no-versioned` enables the legacy direct-write mode and is not recommended
+for a live deployment.
+
+Before accepting a build, Kerana verifies:
+
+* every indexed source has at least one valid name;
+* the bulk API reported no failures;
+* the Elasticsearch count equals the number of formatted MongoDB documents;
+* indexable MongoDB source IDs and Elasticsearch document IDs are identical;
+  records without any non-empty name are reported as `skipped`.
+
 # TODO
 * selective fields from MongoDB to ES
 * Search text in ES and resolve from ids in MongoDB
@@ -58,6 +109,3 @@ BSD-3-Clause License
 
 # Links
 http://colav.udea.edu.co/
-
-
-
